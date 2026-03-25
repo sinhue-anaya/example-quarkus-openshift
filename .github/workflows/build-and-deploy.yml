@@ -1,0 +1,77 @@
+name: Build nativo y deploy en OpenShift Local
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  # GitHub Container Registry — usa tu usuario de GitHub
+  IMAGE_REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/mi-app-quarkus
+
+  # Namespace donde vive tu app en OpenShift Local
+  OCP_NAMESPACE: mi-namespace
+
+jobs:
+  build-and-deploy:
+    name: Build imagen nativa y desplegar
+    runs-on: self-hosted
+    # Permisos necesarios para publicar en GHCR
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # ── 1. Código fuente ──────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Login a GitHub Container Registry (GHCR) ───────────────────────
+      #       Usa el token automático de GitHub Actions — sin secretos extra
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 3. Cache de capas Docker (acelera rebuilds de dependencias) ────────
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ── 4. Build nativo + push de imagen ──────────────────────────────────
+      #       Todo el build (GraalVM + Maven + native-image) ocurre DENTRO
+      #       del Dockerfile multi-stage. No necesitas JDK en el runner.
+      #
+      #       ⚠️  El build nativo tarda ~15-25 min en runners de GitHub.
+      #           push: true solo se activa en la rama main.
+      - name: Build y push imagen nativa
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.native
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          # Caché entre runs para las capas de dependencias Maven
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── 5. Deploy a OpenShift Local (solo en main) ────────────────────────
+      - name: Login a OpenShift Local
+        if: github.ref == 'refs/heads/main'
+        uses: redhat-actions/oc-login@v1
+        with:
+          openshift_server_url: ${{ secrets.OPENSHIFT_SERVER }}
+          openshift_token: ${{ secrets.OPENSHIFT_TOKEN }}
+          insecure_skip_tls_verify: true
+
+      - name: Actualizar imagen en OpenShift
+        if: github.ref == 'refs/heads/main'
+        shell: cmd
+        run: |
+          oc set image deployment/mi-app-quarkus mi-app-quarkus=${{ env.IMAGE_NAME }}:${{ github.sha }} -n ${{ env.OCP_NAMESPACE }}
+          oc rollout status deployment/mi-app-quarkus -n ${{ env.OCP_NAMESPACE }} --timeout=5m
