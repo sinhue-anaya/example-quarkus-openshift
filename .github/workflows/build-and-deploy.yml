@@ -7,12 +7,12 @@ on:
     branches: [main]
 
 env:
-  # GitHub Container Registry — usa tu usuario de GitHub
+  # GitHub Container Registry — usuario de GitHub
   IMAGE_REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/mi-app-quarkus
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/quarkus
 
   # Namespace donde vive tu app en OpenShift Local
-  OCP_NAMESPACE: mi-namespace
+  OCP_NAMESPACE: quarkus-namespace
 
 jobs:
   build-and-deploy:
@@ -42,11 +42,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       # ── 4. Build nativo + push de imagen ──────────────────────────────────
-      #       Todo el build (GraalVM + Maven + native-image) ocurre DENTRO
-      #       del Dockerfile multi-stage. No necesitas JDK en el runner.
-      #
-      #       ⚠️  El build nativo tarda ~15-25 min en runners de GitHub.
-      #           push: true solo se activa en la rama main.
       - name: Build y push imagen nativa
         uses: docker/build-push-action@v5
         with:
