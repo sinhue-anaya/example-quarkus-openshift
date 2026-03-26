@@ -68,5 +68,5 @@ jobs:
         if: github.ref == 'refs/heads/main'
         shell: cmd
         run: |
-          oc set image deployment/quarkus-namespace quarkus-namespace=${{ env.IMAGE_NAME }}:${{ github.sha }} -n ${{ env.OCP_NAMESPACE }}
-          oc rollout status deployment/quarkus-namespace -n ${{ env.OCP_NAMESPACE }} --timeout=5m
+          oc set image deployment/quarkus-app quarkus-app=${{ env.IMAGE_NAME }}:${{ github.sha }} -n ${{ env.OCP_NAMESPACE }}
+          oc rollout status deployment/quarkus-app -n ${{ env.OCP_NAMESPACE }} --timeout=5m
