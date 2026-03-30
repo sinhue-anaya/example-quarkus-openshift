@@ -9,6 +9,7 @@ spec:
     - name: git-url
       type: string
       description: URL del repositorio de GitHub
+      default: https://github.com/sinhue-anaya/code-with-quarkus.git
     - name: git-revision
       type: string
       description: Rama o commit a construir
