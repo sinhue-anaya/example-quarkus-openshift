@@ -1,0 +1,139 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: quarkus-native-pipeline
+  namespace: mi-namespace
+spec:
+  # ── Parámetros que recibe el pipeline ──────────────────────────────────────
+  params:
+    - name: git-url
+      type: string
+      description: URL del repositorio de GitHub
+    - name: git-revision
+      type: string
+      description: Rama o commit a construir
+      default: main
+    - name: image-name
+      type: string
+      description: Nombre de la imagen en el registry interno
+      # Formato: image-registry.openshift-image-registry.svc:5000/NAMESPACE/NOMBRE
+      default: image-registry.openshift-image-registry.svc:5000/mi-namespace/mi-app-quarkus
+
+  # ── Workspace compartido entre todas las tasks ─────────────────────────────
+  workspaces:
+    - name: source
+
+  # ── Tasks del pipeline ─────────────────────────────────────────────────────
+  tasks:
+
+    # 1. Clonar el repositorio desde GitHub
+    - name: clone
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone
+          - name: namespace
+            value: openshift-pipelines
+      workspaces:
+        - name: output
+          workspace: source
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+        - name: deleteExisting
+          value: "true"
+
+    # 2. Construir imagen nativa con buildah (usa el Dockerfile.native del repo)
+    - name: build-and-push
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: buildah
+          - name: namespace
+            value: openshift-pipelines
+      runAfter:
+        - clone
+      workspaces:
+        - name: source
+          workspace: source
+      params:
+        - name: IMAGE
+          value: $(params.image-name):$(tasks.clone.results.commit)
+        - name: DOCKERFILE
+          value: ./Dockerfile.native
+        - name: CONTEXT
+          value: .
+        # Necesario para registry interno con certificado autofirmado de CRC
+        - name: TLSVERIFY
+          value: "false"
+        # Build nativo tarda ~20 min — aumentamos el timeout
+        - name: BUILD_EXTRA_ARGS
+          value: "--storage-driver=vfs"
+
+    # 3. Actualizar el tag :latest para que apunte al commit recién construido
+    - name: tag-latest
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: buildah
+          - name: namespace
+            value: openshift-pipelines
+      runAfter:
+        - build-and-push
+      workspaces:
+        - name: source
+          workspace: source
+      params:
+        - name: IMAGE
+          value: $(params.image-name):latest
+        - name: DOCKERFILE
+          value: ./Dockerfile.native
+        - name: CONTEXT
+          value: .
+        - name: TLSVERIFY
+          value: "false"
+        - name: BUILD_EXTRA_ARGS
+          value: "--storage-driver=vfs"
+
+    # 4. Desplegar en OpenShift actualizando el Deployment
+    - name: deploy
+      runAfter:
+        - tag-latest
+      taskSpec:
+        params:
+          - name: image
+          - name: namespace
+          - name: deployment-name
+        steps:
+          - name: oc-set-image
+            image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+            script: |
+              #!/bin/sh
+              set -e
+              echo "Actualizando deployment $(params.deployment-name)..."
+              oc set image deployment/$(params.deployment-name) \
+                $(params.deployment-name)=$(params.image) \
+                -n $(params.namespace)
+              echo "Esperando rollout..."
+              oc rollout status deployment/$(params.deployment-name) \
+                -n $(params.namespace) \
+                --timeout=10m
+              echo "Deploy completado."
+      params:
+        - name: image
+          value: $(params.image-name):$(tasks.clone.results.commit)
+        - name: namespace
+          value: mi-namespace
+        - name: deployment-name
+          value: mi-app-quarkus
